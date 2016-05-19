@@ -88,15 +88,15 @@ Advanced Installation:  https://github.com/Neilpang/acme.sh/wiki/How-to-install
 
 The installer will perform 3 actions:
 
-1. Create and copy `acme.sh` to your home dir (`$HOME`):  `~/.acme.sh/`.
+1. Create and copy `acme.sh` to your home dir (`$HOME`):  `~/.acme/`.
 All certs will be placed in this folder.
-2. Create alias for: `acme.sh=~/.acme.sh/acme.sh`. 
+2. Create alias for: `acme=~/.acme/acme.sh`. 
 3. Create everyday cron job to check and renew the cert if needed.
 
 Cron entry example:
 
 ```bash
-0 0 * * * "/home/user/.acme.sh"/acme.sh --cron --home "/home/user/.acme.sh" > /dev/null
+0 0 * * * "/home/user/.acme"/acme.sh --cron --home "/home/user/.acme" > /dev/null
 ```
 
 After the installation, you must close current terminal and reopen again to make the alias take effect.
@@ -181,7 +181,7 @@ You must have at least a domain there.
 
 You must point and bind all the domains to the same webroot dir: `/home/wwwroot/aa.com`.
 
-Generate/issued certs will be placed in `~/.acme.sh/aa.com/`
+Generate/issued certs will be placed in `~/.acme/aa.com/`
 
 The issued cert will be renewed every 80 days automatically.
 

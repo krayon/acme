@@ -2,11 +2,11 @@
 
 VER=2.2.4
 
-PROJECT_NAME="acme.sh"
+PROJECT_NAME="acme"
 
 PROJECT_ENTRY="acme.sh"
 
-PROJECT="https://github.com/Neilpang/$PROJECT_NAME"
+PROJECT="https://github.com/krayon/$PROJECT_NAME"
 
 DEFAULT_CA="https://acme-v01.api.letsencrypt.org"
 DEFAULT_AGREEMENT="https://letsencrypt.org/documents/LE-SA-v1.0.1-July-27-2015.pdf"
@@ -1904,7 +1904,7 @@ _installalias() {
   fi
 
   _setopt "$_envfile" "export LE_WORKING_DIR" "=" "\"$LE_WORKING_DIR\""
-  _setopt "$_envfile" "alias $PROJECT_ENTRY" "=" "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
+  _setopt "$_envfile" "alias $PROJECT_NAME" "=" "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
 
   _profile="$(_detect_profile)"
   if [ "$_profile" ] ; then
@@ -1921,7 +1921,7 @@ _installalias() {
   _csh_profile="$HOME/.cshrc"
   if [ -f "$_csh_profile" ] ; then
     _setopt "$_cshfile" "setenv LE_WORKING_DIR" " " "\"$LE_WORKING_DIR\""
-    _setopt "$_cshfile" "alias $PROJECT_ENTRY" " " "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
+    _setopt "$_cshfile" "alias $PROJECT_NAME" " " "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
     _setopt "$_csh_profile"  "source \"$_cshfile\""
   fi
   
@@ -1929,7 +1929,7 @@ _installalias() {
   _tcsh_profile="$HOME/.tcshrc"
   if [ -f "$_tcsh_profile" ] ; then
     _setopt "$_cshfile" "setenv LE_WORKING_DIR" " " "\"$LE_WORKING_DIR\""
-    _setopt "$_cshfile" "alias $PROJECT_ENTRY" " " "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
+    _setopt "$_cshfile" "alias $PROJECT_NAME" " " "\"$LE_WORKING_DIR/$PROJECT_ENTRY\""
     _setopt "$_tcsh_profile"  "source \"$_cshfile\""
   fi
 

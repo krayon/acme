@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-VER=2.2.4
+VER=2.2.5
 
 PROJECT_NAME="acme"
 
@@ -480,6 +480,10 @@ _time2str() {
   
 }
 
+_normalizeJson() {
+  sed "s/\" *: *\([\"{\[]\)/\":\1/g" | sed "s/^ *\([^ ]\)/\1/" | tr -d "\r\n"
+}
+
 _stat() {
   #Linux
   if stat -c '%U:%G' "$1" 2>/dev/null ; then
@@ -667,7 +671,11 @@ _send_signed_request() {
   _debug2 body "$body"
   
 
-  response="$(_post "$body" $url "$needbase64" )"
+  response="$(_post "$body" $url "$needbase64")"
+  
+  _debug2 original "$response"
+  
+  response="$( echo "$response" | _normalizeJson )"
 
   responseHeaders="$(cat $HTTP_HEADER)"
   
@@ -916,16 +924,20 @@ _apachePath() {
     return 1
   fi
   httpdconfname="$(apachectl -V | grep SERVER_CONFIG_FILE= | cut -d = -f 2 | tr -d '"' )"
+  _debug httpdconfname "$httpdconfname"
   if _startswith "$httpdconfname" '/' ; then
     httpdconf="$httpdconfname"
     httpdconfname="$(basename $httpdconfname)"
   else
     httpdroot="$(apachectl -V | grep HTTPD_ROOT= | cut -d = -f 2 | tr -d '"' )"
+    _debug httpdroot "$httpdroot"
     httpdconf="$httpdroot/$httpdconfname"
+    httpdconfname="$(basename $httpdconfname)"
   fi
-
-  if [ ! -f $httpdconf ] ; then
-    _err "Apache Config file not found" $httpdconf
+  _debug httpdconf "$httpdconf"
+  _debug httpdconfname "$httpdconfname"
+  if [ ! -f "$httpdconf" ] ; then
+    _err "Apache Config file not found" "$httpdconf"
     return 1
   fi
   return 0
@@ -964,7 +976,11 @@ _setApache() {
 
   #backup the conf
   _debug "Backup apache config file" "$httpdconf"
-  cp "$httpdconf" "$APACHE_CONF_BACKUP_DIR/"
+  if ! cp "$httpdconf" "$APACHE_CONF_BACKUP_DIR/" ; then
+    _err "Can not backup apache config file, so abort. Don't worry, your apache config is not changed."
+    _err "This might be a bug of $PROJECT_NAME , pleae report issue: $PROJECT"
+    return 1
+  fi
   _info "JFYI, Config file $httpdconf is backuped to $APACHE_CONF_BACKUP_DIR/$httpdconfname"
   _info "In case there is an error that can not be restored automatically, you may try restore it yourself."
   _info "The backup file will be deleted on sucess, just forget it."
@@ -1401,7 +1417,7 @@ issue() {
       MAX_RETRY_TIMES=30
     fi
     
-    while [ "1" ] ; do
+    while true ; do
       waittimes=$(_math $waittimes + 1)
       if [ "$waittimes" -ge "$MAX_RETRY_TIMES" ] ; then
         _err "$d:Timeout"
@@ -1413,7 +1429,7 @@ issue() {
       _debug "sleep 5 secs to verify"
       sleep 5
       _debug "checking"
-      response="$(_get $uri)"
+      response="$(_get $uri | _normalizeJson )"
       if [ "$?" != "0" ] ; then
         _err "$d:Verify error:$response"
         _clearupwebbroot "$_currentRoot" "$removelevel" "$token"
@@ -1478,7 +1494,7 @@ issue() {
   
 
   if [ -z "$Le_LinkCert" ] ; then
-    response="$(echo $response | _dbase64 "multiline" )"
+    response="$(echo $response | _dbase64 "multiline" | _normalizeJson )"
     _err "Sign failed: $(echo "$response" | grep -o  '"detail":"[^"]*"')"
     return 1
   fi

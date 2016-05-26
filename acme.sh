@@ -1233,17 +1233,17 @@ issue() {
         return 1
       fi
 
-      entry="$(printf "$response" | egrep -o  '\{[^{]*"type":"'$vtype'"[^}]*')"
+      entry="$(printf "$response" | egrep -o  '\{[^{]*"type" *: *"'$vtype'"[^}]*')"
       _debug entry "$entry"
       if [ -z "$entry" ] ; then
         _err "Error, can not get domain token $d"
         _clearup
         return 1
       fi
-      token="$(printf "$entry" | egrep -o '"token":"[^"]*' | cut -d : -f 2 | tr -d '"')"
+      token="$(printf "$entry" | egrep -o '"token":"[^"]*' | cut -d : -f 2 | tr -d ' "')"
       _debug token $token
       
-      uri="$(printf "$entry" | egrep -o '"uri":"[^"]*'| cut -d : -f 2,3 | tr -d '"' )"
+      uri="$(printf "$entry" | egrep -o '"uri":"[^"]*'| cut -d : -f 2,3 | tr -d ' "' )"
       _debug uri $uri
       
       keyauthorization="$token.$thumbprint"

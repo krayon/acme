@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-VER=2.2.6
+VER=2.2.8
 
 PROJECT_NAME="acme.sh"
 
@@ -17,12 +17,18 @@ STAGE_CA="https://acme-staging.api.letsencrypt.org"
 
 VTYPE_HTTP="http-01"
 VTYPE_DNS="dns-01"
+VTYPE_TLS="tls-sni-01"
+VTYPE_TLS2="tls-sni-02"
+
+W_TLS="tls"
 
 BEGIN_CSR="-----BEGIN CERTIFICATE REQUEST-----"
 END_CSR="-----END CERTIFICATE REQUEST-----"
 
 BEGIN_CERT="-----BEGIN CERTIFICATE-----"
 END_CERT="-----END CERTIFICATE-----"
+
+RENEW_SKIP=2
 
 if [ -z "$AGREEMENT" ] ; then
   AGREEMENT="$DEFAULT_AGREEMENT"
@@ -251,7 +257,7 @@ _dbase64() {
   fi
 }
 
-#Usage: hashalg
+#Usage: hashalg  [outputhex]
 #Output Base64-encoded digest
 _digest() {
   alg="$1"
@@ -260,8 +266,14 @@ _digest() {
     return 1
   fi
   
+  outputhex="$2"
+  
   if [ "$alg" = "sha256" ] ; then
-    openssl dgst -sha256 -binary | _base64
+    if [ "$outputhex" ] ; then
+      echo $(openssl dgst -sha256 -hex | cut -d = -f 2)
+    else
+      openssl dgst -sha256 -binary | _base64
+    fi
   else
     _err "$alg is not supported yet"
     return 1
@@ -286,6 +298,89 @@ _sign() {
     return 1
   fi  
   
+}
+
+# _createkey  2048|ec-256   file
+_createkey() {
+  length="$1"
+  f="$2"
+  isec=""
+  if _startswith "$length" "ec-" ; then
+    isec="1"
+    length=$(printf $length | cut -d '-' -f 2-100)
+    eccname="$length"
+  fi
+
+  if [ -z "$length" ] ; then
+    if [ "$isec" ] ; then
+      length=256
+    else
+      length=2048
+    fi
+  fi
+  _info "Use length $length"
+
+  if [ "$isec" ] ; then
+    if [ "$length" = "256" ] ; then
+      eccname="prime256v1"
+    fi
+    if [ "$length" = "384" ] ; then
+      eccname="secp384r1"
+    fi
+    if [ "$length" = "521" ] ; then
+      eccname="secp521r1"
+    fi
+    _info "Using ec name: $eccname"
+  fi
+
+  #generate account key
+  if [ "$isec" ] ; then
+    openssl ecparam  -name $eccname -genkey 2>/dev/null > "$f"
+  else
+    openssl genrsa $length 2>/dev/null > "$f"
+  fi
+}
+
+#_createcsr  cn  san_list  keyfile csrfile conf
+_createcsr() {
+  _debug _createcsr
+  domain="$1"
+  domainlist="$2"
+  key="$3"
+  csr="$4"
+  csrconf="$5"
+  _debug2 domain "$domain"
+  _debug2 domainlist "$domainlist"
+  if [ -z "$domainlist" ] || [ "$domainlist" = "no" ]; then
+    #single domain
+    _info "Single domain" "$domain"
+    printf "[ req_distinguished_name ]\n[ req ]\ndistinguished_name = req_distinguished_name\n" > "$csrconf"
+    openssl req -new -sha256 -key "$key" -subj "/CN=$domain" -config "$csrconf" -out "$csr"
+  else
+    if _contains "$domainlist" "," ; then
+      alt="DNS:$(echo $domainlist | sed "s/,/,DNS:/g")"
+    else
+      alt="DNS:$domainlist"
+    fi
+    #multi 
+    _info "Multi domain" "$alt"
+    printf "[ req_distinguished_name ]\n[ req ]\ndistinguished_name = req_distinguished_name\nreq_extensions = v3_req\n[ v3_req ]\nkeyUsage = nonRepudiation, digitalSignature, keyEncipherment\nsubjectAltName=$alt" > "$csrconf"
+    openssl req -new -sha256 -key "$key" -subj "/CN=$domain" -config "$csrconf" -out "$csr"
+  fi
+}
+
+#_signcsr key  csr  conf cert
+_signcsr() {
+  key="$1"
+  csr="$2"
+  conf="$3"
+  cert="$4"
+  _debug "_signcsr"
+  
+  _msg="$(openssl x509 -req -days 365  -in "$csr"  -signkey "$key"  -extensions v3_req -extfile "$conf" -out "$cert"  2>&1)"
+  _ret="$?"
+  _debug "$_msg"
+  return $_ret
 }
 
 _ss() {
@@ -364,7 +459,7 @@ createAccountKey() {
     return
   else
     #generate account key
-    openssl genrsa $length 2>/dev/null > "$ACCOUNT_KEY_PATH"
+    _createkey $length "$ACCOUNT_KEY_PATH"
   fi
 
 }
@@ -378,45 +473,12 @@ createDomainKey() {
   fi
   
   domain=$1
-  length=$2
-  isec=""
-  if _startswith "$length" "ec-" ; then
-    isec="1"
-    length=$(printf $length | cut -d '-' -f 2-100)
-    eccname="$length"
-  fi
-
-  if [ -z "$length" ] ; then
-    if [ "$isec" ] ; then
-      length=256
-    else
-      length=2048
-    fi
-  fi
-  _info "Use length $length"
-
-  if [ "$isec" ] ; then
-    if [ "$length" = "256" ] ; then
-      eccname="prime256v1"
-    fi
-    if [ "$length" = "384" ] ; then
-      eccname="secp384r1"
-    fi
-    if [ "$length" = "521" ] ; then
-      eccname="secp521r1"
-    fi
-    _info "Using ec name: $eccname"
-  fi
-  
   _initpath $domain
   
+  length=$2
+
   if [ ! -f "$CERT_KEY_PATH" ] || ( [ "$FORCE" ] && ! [ "$IS_RENEW" ] ); then 
-    #generate account key
-    if [ "$isec" ] ; then
-      openssl ecparam  -name $eccname -genkey 2>/dev/null > "$CERT_KEY_PATH"
-    else
-      openssl genrsa $length 2>/dev/null > "$CERT_KEY_PATH"
-    fi
+    _createkey "$length" "$CERT_KEY_PATH"
   else
     if [ "$IS_RENEW" ] ; then
       _info "Domain key exists, skip"
@@ -447,19 +509,8 @@ createCSR() {
     return
   fi
   
-  if [ -z "$domainlist" ] || [ "$domainlist" = "no" ]; then
-    #single domain
-    _info "Single domain" "$domain"
-    printf "[ req_distinguished_name ]\n[ req ]\ndistinguished_name = req_distinguished_name\n" > "$DOMAIN_SSL_CONF"
-    openssl req -new -sha256 -key "$CERT_KEY_PATH" -subj "/CN=$domain" -config "$DOMAIN_SSL_CONF" -out "$CSR_PATH"
-  else
-    alt="DNS:$(echo $domainlist | sed "s/,/,DNS:/g")"
-    #multi 
-    _info "Multi domain" "$alt"
-    printf "[ req_distinguished_name ]\n[ req ]\ndistinguished_name = req_distinguished_name\n[SAN]\nsubjectAltName=$alt" > "$DOMAIN_SSL_CONF"
-    openssl req -new -sha256 -key "$CERT_KEY_PATH" -subj "/CN=$domain" -reqexts SAN -config "$DOMAIN_SSL_CONF" -out "$CSR_PATH"
-  fi
-
+  _createcsr "$domain" "$domainlist" "$CERT_KEY_PATH" "$CSR_PATH" "$DOMAIN_SSL_CONF"
+  
 }
 
 _urlencode() {
@@ -587,9 +638,9 @@ _post() {
     _CURL="$CURL --dump-header $HTTP_HEADER "
     _debug "_CURL" "$_CURL"
     if [ "$needbase64" ] ; then
-      response="$($_CURL -A "User-Agent: $USER_AGENT" -X $httpmethod -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" --data "$body" "$url" | _base64)"
+      response="$($_CURL --user-agent "$USER_AGENT" -X $httpmethod -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" --data "$body" "$url" | _base64)"
     else
-      response="$($_CURL -A "User-Agent: $USER_AGENT" -X $httpmethod -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" --data "$body" "$url" )"
+      response="$($_CURL --user-agent "$USER_AGENT" -X $httpmethod -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" --data "$body" "$url" )"
     fi
     _ret="$?"
   else
@@ -624,9 +675,9 @@ _get() {
   if _exists "curl" ; then
     _debug "CURL" "$CURL"
     if [ "$onlyheader" ] ; then
-      $CURL -I -A "User-Agent: $USER_AGENT" -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" $url
+      $CURL -I --user-agent "$USER_AGENT" -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" $url
     else
-      $CURL    -A "User-Agent: $USER_AGENT" -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" $url
+      $CURL    --user-agent "$USER_AGENT" -H "$_H1" -H "$_H2" -H "$_H3" -H "$_H4" $url
     fi
     ret=$?
   else
@@ -819,9 +870,57 @@ _stopserver(){
   if [ -z "$pid" ] ; then
     return
   fi
-  
-  _get "http://localhost:$Le_HTTPPort" >/dev/null 2>&1
 
+  _get "http://localhost:$Le_HTTPPort" >/dev/null 2>&1
+  _get "https://localhost:$Le_TLSPort" >/dev/null 2>&1
+
+}
+
+
+# _starttlsserver  san_a  san_b port content
+_starttlsserver() {
+  _info "Starting tls server."
+  san_a="$1"
+  san_b="$2"
+  port="$3"
+  content="$4"
+  
+  _debug san_a "$san_a"
+  _debug san_b "$san_b"
+  _debug port "$port"
+  
+  #create key TLS_KEY
+  if ! _createkey "2048" "$TLS_KEY" ; then
+    _err "Create tls validation key error."
+    return 1
+  fi
+  
+  #create csr
+  alt="$san_a"
+  if [ "$san_b" ] ; then
+    alt="$alt,$san_b"
+  fi
+  if ! _createcsr "tls.acme.sh" "$alt" "$TLS_KEY" "$TLS_CSR" "$TLS_CONF"  ; then
+    _err "Create tls validation csr error."
+    return 1
+  fi
+  
+  #self signed
+  if ! _signcsr "$TLS_KEY"  "$TLS_CSR"  "$TLS_CONF" "$TLS_CERT" ; then
+    _err "Create tls validation cert error."
+    return 1
+  fi
+  
+  #start openssl
+  if [ "$DEBUG" ] && [ "$DEBUG" -ge "2" ] ; then
+    (printf "HTTP/1.1 200 OK\r\n\r\n$content" | openssl s_server -cert "$TLS_CERT"  -key "$TLS_KEY" -accept $port -naccept 1 -tlsextdebug ) &
+  else
+    (printf "HTTP/1.1 200 OK\r\n\r\n$content" | openssl s_server -cert "$TLS_CERT"  -key "$TLS_KEY" -accept $port -naccept 1 >/dev/null 2>&1) &
+  fi
+
+  serverproc="$!"
+  sleep 2
+  _debug serverproc $serverproc
 }
 
 _initpath() {
@@ -886,6 +985,11 @@ _initpath() {
   if [ "$DEBUG" ] && [ "$DEBUG" -ge "2" ] ; then
     CURL="$CURL --trace-ascii $dp "
   fi
+  
+  if [ "$Le_Insecure" ] ; then
+    WGET="$WGET --no-check-certificate "
+    CURL="$CURL --insecure  "
+  fi
 
   _DEFAULT_ACCOUNT_KEY_PATH="$LE_WORKING_DIR/account.key"
   if [ -z "$ACCOUNT_KEY_PATH" ] ; then
@@ -935,6 +1039,20 @@ _initpath() {
   if [ -z "$CERT_PFX_PATH" ] ; then
     CERT_PFX_PATH="$domainhome/$domain.pfx"
   fi
+  
+  if [ -z "$TLS_CONF" ] ; then
+    TLS_CONF="$domainhome/tls.valdation.conf"
+  fi
+  if [ -z "$TLS_CERT" ] ; then
+    TLS_CERT="$domainhome/tls.valdation.cert"
+  fi
+  if [ -z "$TLS_KEY" ] ; then
+    TLS_KEY="$domainhome/tls.valdation.key"
+  fi
+  if [ -z "$TLS_CSR" ] ; then
+    TLS_CSR="$domainhome/tls.valdation.csr"
+  fi
+  
 }
 
 
@@ -995,10 +1113,22 @@ _setApache() {
     return 1
   fi
 
+  #test the conf first
+  _info "Checking if there is an error in the apache config file before starting."
+  _msg="$(apachectl  -t  2>&1 )"
+  if [ "$?" != "0" ] ; then
+    _err "Sorry, apache config file has error, please fix it first, then try again."
+    _err "Don't worry, there is nothing changed to your system."
+    _err "$_msg"
+    return 1;
+  else
+    _info "OK"
+  fi
+  
   #backup the conf
   _debug "Backup apache config file" "$httpdconf"
   if ! cp "$httpdconf" "$APACHE_CONF_BACKUP_DIR/" ; then
-    _err "Can not backup apache config file, so abort. Don't worry, your apache config is not changed."
+    _err "Can not backup apache config file, so abort. Don't worry, the apache config is not changed."
     _err "This might be a bug of $PROJECT_NAME , pleae report issue: $PROJECT"
     return 1
   fi
@@ -1032,10 +1162,14 @@ Allow from all
   " >> "$httpdconf"
   fi
 
-  
-  if ! apachectl  -t >/dev/null 2>&1; then
-    _err "Sorry, apache config error, please contact me."
-    _restoreApache
+  _msg="$(apachectl  -t  2>&1 )"
+  if [ "$?" != "0" ] ; then
+    _err "Sorry, apache config error"
+    if _restoreApache ; then
+      _err "The apache config file is restored."
+    else
+      _err "Sorry, The apache config file can not be restored, please report bug."
+    fi
     return 1;
   fi
   
@@ -1057,6 +1191,12 @@ _clearup() {
   _stopserver $serverproc
   serverproc=""
   _restoreApache
+  if [ -z "$DEBUG" ] ; then
+    rm -f "$TLS_CONF"
+    rm -f "$TLS_CERT"
+    rm -f "$TLS_KEY"
+    rm -f "$TLS_CSR"
+  fi
 }
 
 # webroot  removelevel tokenfile
@@ -1077,7 +1217,7 @@ _clearupwebbroot() {
     _debug "remove $__webroot/.well-known/acme-challenge/$3"
     rm -rf "$__webroot/.well-known/acme-challenge/$3"
   else
-    _info "Skip for removelevel:$2"
+    _debug "Skip for removelevel:$2"
   fi
   
   return 0
@@ -1117,7 +1257,7 @@ issue() {
     _debug Le_NextRenewTime "$Le_NextRenewTime"
     if [ -z "$FORCE" ] && [ "$Le_NextRenewTime" ] && [ $(date -u "+%s" ) -lt $Le_NextRenewTime ] ; then 
       _info "Skip, Next renewal time is: $(grep "^Le_NextRenewTimeStr" "$DOMAIN_CONF" | cut -d '=' -f 2)"
-      return 2
+      return $RENEW_SKIP
     fi
   fi
 
@@ -1150,6 +1290,24 @@ issue() {
     if [ "$netprc" ] ; then
       _err "$netprc"
       _err "tcp port $Le_HTTPPort is already used by $(echo "$netprc" | cut -d :  -f 4)"
+      _err "Please stop it first"
+      return 1
+    fi
+  fi
+  
+  if _hasfield "$Le_Webroot" "$W_TLS" ; then
+    _info "Standalone tls mode."
+    
+    if [ -z "$Le_TLSPort" ] ; then
+      Le_TLSPort=443
+    else
+      _savedomainconf "Le_TLSPort"  "$Le_TLSPort"
+    fi    
+    
+    netprc="$(_ss "$Le_TLSPort" | grep "$Le_TLSPort")"
+    if [ "$netprc" ] ; then
+      _err "$netprc"
+      _err "tcp port $Le_TLSPort is already used by $(echo "$netprc" | cut -d :  -f 4)"
       _err "Please stop it first"
       return 1
     fi
@@ -1247,6 +1405,11 @@ issue() {
       if _startswith "$_currentRoot" "dns" ; then
         vtype="$VTYPE_DNS"
       fi
+      
+      if [ "$_currentRoot" = "$W_TLS" ] ; then
+        vtype="$VTYPE_TLS"
+      fi
+      
       _info "Getting token for domain" $d
 
       if ! _send_signed_request "$API/acme/new-authz" "{\"resource\": \"new-authz\", \"identifier\": {\"type\": \"dns\", \"value\": \"$d\"}}" ; then
@@ -1390,7 +1553,7 @@ issue() {
     _debug "keyauthorization" "$keyauthorization"
     _debug "uri" "$uri"
     removelevel=""
-    token=""
+    token="$(printf "%s" "$keyauthorization" | cut -d '.' -f 1)"
 
     _debug "_currentRoot" "$_currentRoot"
 
@@ -1423,7 +1586,6 @@ issue() {
 
         _debug wellknown_path "$wellknown_path"
 
-        token="$(printf "%s" "$keyauthorization" | cut -d '.' -f 1)"
         _debug "writing token:$token to $wellknown_path/$token"
 
         mkdir -p "$wellknown_path"
@@ -1434,6 +1596,37 @@ issue() {
           chown -R $webroot_owner "$_currentRoot/.well-known"
         fi
         
+      fi
+      
+    elif [ "$vtype" = "$VTYPE_TLS" ] ; then
+      #create A
+      #_hash_A="$(printf "%s" $token | _digest "sha256" "hex" )"
+      #_debug2 _hash_A "$_hash_A"
+      #_x="$(echo $_hash_A | cut -c 1-32)"
+      #_debug2 _x "$_x"
+      #_y="$(echo $_hash_A | cut -c 33-64)"
+      #_debug2 _y "$_y"
+      #_SAN_A="$_x.$_y.token.acme.invalid"
+      #_debug2 _SAN_A "$_SAN_A"
+      
+      #create B
+      _hash_B="$(printf "%s" $keyauthorization | _digest "sha256" "hex" )"
+      _debug2 _hash_B "$_hash_B"
+      _x="$(echo $_hash_B | cut -c 1-32)"
+      _debug2 _x "$_x"
+      _y="$(echo $_hash_B | cut -c 33-64)"
+      _debug2 _y "$_y"
+      
+      #_SAN_B="$_x.$_y.ka.acme.invalid"
+      
+      _SAN_B="$_x.$_y.acme.invalid"
+      _debug2 _SAN_B "$_SAN_B"
+      
+      if ! _starttlsserver "$_SAN_B" "$_SAN_A" "$Le_TLSPort" "$keyauthorization" ; then
+        _err "Start tls server error."
+        _clearupwebbroot "$_currentRoot" "$removelevel" "$token"
+        _clearup
+        return 1
       fi
     fi
     
@@ -1577,7 +1770,11 @@ issue() {
     Le_RenewalDays=80
   else
     _savedomainconf  "Le_RenewalDays"   "$Le_RenewalDays"
-  fi  
+  fi
+  
+  if [ "$Le_Insecure" ] ; then
+    _savedomainconf  "Le_Insecure"   "$Le_Insecure"
+  fi
 
   Le_NextRenewTime=$(_math $Le_CertCreateTime + $Le_RenewalDays \* 24 \* 60 \* 60)
   _savedomainconf "Le_NextRenewTime"   "$Le_NextRenewTime"
@@ -1606,7 +1803,7 @@ renew() {
   fi
 
   _initpath $Le_Domain
-
+  _info "Renew: $Le_Domain"
   if [ ! -f "$DOMAIN_CONF" ] ; then
     _info "$Le_Domain is not a issued domain, skip."
     return 0;
@@ -1615,7 +1812,7 @@ renew() {
   . "$DOMAIN_CONF"
   if [ -z "$FORCE" ] && [ "$Le_NextRenewTime" ] && [ "$(date -u "+%s" )" -lt "$Le_NextRenewTime" ] ; then 
     _info "Skip, Next renewal time is: $Le_NextRenewTimeStr"
-    return 2
+    return $RENEW_SKIP
   fi
   
   IS_RENEW="1"
@@ -1626,16 +1823,32 @@ renew() {
   return $res
 }
 
+#renewAll  [stopRenewOnError]
 renewAll() {
   _initpath
+  _stopRenewOnError="$1"
+  _debug "_stopRenewOnError" "$_stopRenewOnError"
+  _ret="0"
   for d in $(ls -F ${CERT_HOME}/ | grep [^.].*[.].*/$ ) ; do
     d=$(echo $d | cut -d '/' -f 1)
-    (
-      _info "Renew: $d" 
+    ( 
       renew "$d"
     )
+    rc="$?"
+    _debug "Return code: $rc"
+    if [ "$rc" != "0" ] ; then
+      if [ "$rc" = "$RENEW_SKIP" ] ; then
+        _info "Skipped $d"
+      elif [ "$_stopRenewOnError" ] ; then
+        _err "Error renew $d,  stop now."
+        return $rc
+      else
+        _ret="$rc"
+        _err "Error renew $d, Go ahead to next one."
+      fi
+    fi
   done
-  
+  return $_ret
 }
 
 
@@ -1914,7 +2127,7 @@ _initconf() {
 
 #ACCOUNT_KEY_HASH=account key hash
 
-USER_AGENT=\"$USER_AGENT\"
+#USER_AGENT=\"$USER_AGENT\"
 
 #USER_PATH=""
 
@@ -1943,20 +2156,25 @@ USER_AGENT=\"$USER_AGENT\"
   fi
 }
 
+# nocron
 _precheck() {
+  _nocron="$1"
+  
   if ! _exists "curl"  && ! _exists "wget"; then
     _err "Please install curl or wget first, we need to access http resources."
     return 1
   fi
   
-  if ! _exists "crontab" ; then
-    _err "It is recommended to install crontab first. try to install 'cron, crontab, crontabs or vixie-cron'."
-    _err "We need to set cron job to renew the certs automatically."
-    _err "Otherwise, your certs will not be able to be renewed automatically."
-    if [ -z "$FORCE" ] ; then
-      _err "Please add '--force' and try install again to go without crontab."
-      _err "./$PROJECT_ENTRY --install --force"
-      return 1
+  if [ -z "$_nocron" ] ; then
+    if ! _exists "crontab" ; then
+      _err "It is recommended to install crontab first. try to install 'cron, crontab, crontabs or vixie-cron'."
+      _err "We need to set cron job to renew the certs automatically."
+      _err "Otherwise, your certs will not be able to be renewed automatically."
+      if [ -z "$FORCE" ] ; then
+        _err "Please add '--force' and try install again to go without crontab."
+        _err "./$PROJECT_ENTRY --install --force"
+        return 1
+      fi
     fi
   fi
   
@@ -2030,14 +2248,15 @@ _installalias() {
 
 }
 
+# nocron
 install() {
-
+  _nocron="$1"
   if ! _initpath ; then
     _err "Install failed."
     return 1
   fi
 
-  if ! _precheck ; then
+  if ! _precheck "$_nocron" ; then
     _err "Pre-check failed, can not install."
     return 1
   fi
@@ -2100,7 +2319,9 @@ install() {
     _saveaccountconf "ACCOUNT_KEY_PATH" "$ACCOUNT_KEY_PATH"
   fi
   
-  installcronjob
+  if [ -z "$_nocron" ] ; then
+    installcronjob
+  fi
 
   if [ -z "$NO_DETECT_SH" ] ; then
     #Modify shebang
@@ -2149,7 +2370,9 @@ uninstall() {
 cron() {
   IN_CRON=1
   renewAll
+  _ret="$?"
   IN_CRON=""
+  return $_ret
 }
 
 version() {
@@ -2187,6 +2410,7 @@ Parameters:
     
   --webroot, -w  /path/to/webroot   Specifies the web root folder for web root mode.
   --standalone                      Use standalone mode.
+  --tls                             Use standalone tls mode.
   --apache                          Use apache mode.
   --dns [dns_cf|dns_dp|dns_cx|/path/to/api/file]   Use dns mode or dns api.
   --dnssleep  [60]                  The time in seconds to wait for all the txt records to take effect in dns api mode. Default 60 seconds.
@@ -2211,7 +2435,11 @@ Parameters:
   --accountkey                      Specifies the account key path, Only valid for the '--install' command.
   --days                            Specifies the days to renew the cert when using '--issue' command. The max value is 80 days.
   --httpport                        Specifies the standalone listening port. Only valid if the server is behind a reverse proxy or load balancer.
+  --tlsport                         Specifies the standalone tls listening port. Only valid if the server is behind a reverse proxy or load balancer.
   --listraw                         Only used for '--list' command, list the certs in raw format.
+  --stopRenewOnError, -se           Only valid for '--renewall' command. Stop if one cert has error in renewal.
+  --insecure                        Do not check the server certificate, in some devices, the api server's certificate may not be trusted.
+  --nocron                          Only valid for `--install` command, which means: do not install the default cron job. In this case, the certs will not be renewed automatically.
   "
 }
 
@@ -2261,8 +2489,12 @@ _process() {
   _accountkey=""
   _certhome=""
   _httpport=""
+  _tlsport=""
   _dnssleep=""
   _listraw=""
+  _stopRenewOnError=""
+  _insecure=""
+  _nocron=""
   while [ ${#} -gt 0 ] ; do
     case "${1}" in
     
@@ -2383,6 +2615,14 @@ _process() {
           _webroot="$_webroot,$wvalue"
         fi
         ;;
+    --tls)
+        wvalue="$W_TLS"
+        if [ -z "$_webroot" ] ; then
+          _webroot="$wvalue"
+        else
+          _webroot="$_webroot,$wvalue"
+        fi
+        ;;
     --dns)
         wvalue="dns"
         if ! _startswith "$2" "-" ; then
@@ -2403,11 +2643,13 @@ _process() {
         
     --keylength|-k)
         _keylength="$2"
-        accountkeylength="$2"
+        if [ "$_accountkeylength" = "no" ] ; then
+          _accountkeylength="$2"
+        fi
         shift
         ;;
     --accountkeylength|-ak)
-        accountkeylength="$2"
+        _accountkeylength="$2"
         shift
         ;;
 
@@ -2474,10 +2716,25 @@ _process() {
         Le_HTTPPort="$_httpport"
         shift
         ;;
+    --tlsport )
+        _tlsport="$2"
+        Le_TLSPort="$_tlsport"
+        shift
+        ;;
+        
     --listraw )
         _listraw="raw"
         ;;        
-        
+    --stopRenewOnError|--stoprenewonerror|-se )
+        _stopRenewOnError="1"
+        ;;
+    --insecure)
+        _insecure="1"
+        Le_Insecure="$_insecure"
+        ;;
+    --nocron)
+        _nocron="1"
+        ;;
     *)
         _err "Unknown parameter : $1"
         return 1
@@ -2489,7 +2746,7 @@ _process() {
 
 
   case "${_CMD}" in
-    install) install ;;
+    install) install "$_nocron" ;;
     uninstall) uninstall ;;
     issue)
       issue  "$_webroot"  "$_domain" "$_altdomains" "$_keylength" "$_certpath" "$_keypath" "$_capath" "$_reloadcmd" "$_fullchainpath"
@@ -2501,7 +2758,7 @@ _process() {
       renew "$_domain" 
       ;;
     renewAll) 
-      renewAll 
+      renewAll "$_stopRenewOnError"
       ;;
     revoke) 
       revoke "$_domain" 

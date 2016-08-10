@@ -64,6 +64,32 @@ acme.sh   --issue   --dns dns_cx   -d aa.com  -d www.aa.com
 The `CX_Key` and `CX_Secret`  will be saved in `~/.acme.sh/account.conf`, when next time you use Cloudxns.com api, it will reuse this key.
 
 
+## Use Godaddy.com domain api to automatically issue cert
+
+We support Godaddy integeration.
+
+First you need to login to your Godaddy account to get your api key and api secret.
+
+https://developer.godaddy.com/keys/
+
+Please Create a Production key, instead of a Test key.
+
+
+```
+export GD_Key="sdfsdfsdfljlbjkljlkjsdfoiwje"
+
+export GD_Secret="asdfsdafdsfdsfdsfdsfdsafd"
+
+```
+
+Ok, let's issue cert now:
+```
+acme.sh   --issue   --dns dns_gd   -d aa.com  -d www.aa.com
+```
+
+The `GD_Key` and `GD_Secret`  will be saved in `~/.acme.sh/account.conf`, when next time you use cloudflare api, it will reuse this key.
+
+
 
 # Use custom api
 
@@ -72,7 +98,7 @@ If your api is not supported yet,  you can write your own dns api.
 Let's assume you want to name it 'myapi',
 
 1. Create a bash script named  `~/.acme.sh/dns_myapi.sh`,
-2. In the scrypt, you must have a function named `dns_myapi_add()`. Which will be called by acme.sh to add dns records.
+2. In the script, you must have a function named `dns_myapi_add()`. Which will be called by acme.sh to add dns records.
 3. Then you can use your api to issue cert like:
 
 ```

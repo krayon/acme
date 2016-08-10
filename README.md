@@ -32,6 +32,7 @@ Wiki: https://github.com/Neilpang/acme.sh/wiki
 |14|-----| Cloud Linux  https://github.com/Neilpang/le/issues/111
 |15|[![](https://cdn.rawgit.com/Neilpang/acmetest/master/status/openbsd.svg)](https://github.com/Neilpang/letest#here-are-the-latest-status)|OpenBSD
 |16|[![](https://cdn.rawgit.com/Neilpang/acmetest/master/status/mageia.svg)](https://github.com/Neilpang/letest#here-are-the-latest-status)|Mageia
+|17|-----| OpenWRT: Tested and working. See [wiki page](https://github.com/Neilpang/acme.sh/wiki/How-to-run-on-OpenWRT)
 
 For all build statuses, check our [daily build project](https://github.com/Neilpang/acmetest): 
 
@@ -242,8 +243,9 @@ You don't have do anything manually!
 1. Cloudflare.com API
 2. Dnspod.cn API
 3. Cloudxns.com API
-4. AWS Route 53, see: https://github.com/Neilpang/acme.sh/issues/65
-5. lexicon dns api: https://github.com/Neilpang/acme.sh/wiki/How-to-use-lexicon-dns-api
+4. Godaddy.com API
+5. AWS Route 53, see: https://github.com/Neilpang/acme.sh/issues/65
+6. lexicon dns api: https://github.com/Neilpang/acme.sh/wiki/How-to-use-lexicon-dns-api
    (DigitalOcean, DNSimple, DnsMadeEasy, DNSPark, EasyDNS, Namesilo, NS1, PointHQ, Rage4 and Vultr etc.)
 
 ##### More APIs are coming soon...
@@ -302,4 +304,6 @@ Please Star and Fork me.
 [Issues](https://github.com/Neilpang/acme.sh/issues) and [pull requests](https://github.com/Neilpang/acme.sh/pulls) are welcomed.
 
 
+# Donate
+1. PayPal:  donate@acme.sh
 
